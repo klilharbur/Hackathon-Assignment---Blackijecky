@@ -52,6 +52,7 @@ def play_game(server_ip, server_port):
     שלב 2+3: חיבור TCP וניהול המשחק
     """
     tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_sock.settimeout(5)
 
     try:
         # 1. התחברות לשרת
@@ -154,4 +155,5 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 

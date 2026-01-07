@@ -11,6 +11,14 @@ MSG_TYPE_OFFER = 0x2  # סוג הודעה: הצעת משחק (שרת -> לקוח
 MSG_TYPE_REQUEST = 0x3  # סוג הודעה: בקשת משחק (לקוח -> שרת)
 MSG_TYPE_PAYLOAD = 0x4  # סוג הודעה: מהלך משחק (קלף או החלטה)
 
+def read_exact(sock, n):
+    data = b''
+    while len(data) < n:
+        chunk = sock.recv(n - len(data))
+        if not chunk:
+            return None
+        data += chunk
+    return data
 
 # ============================================================================
 #                          פונקציות עזר (Helper Functions)
@@ -177,4 +185,5 @@ def unpack_payload_server(data):
             return False, None, None, None
         return True, result, rank, suit
     except:
+
         return False, None, None, None

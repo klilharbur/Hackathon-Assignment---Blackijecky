@@ -78,12 +78,12 @@ def play_game(server_ip, server_port):
             # מחכים להודעה מהשרת (קלף או תוצאה)
             # אנחנו קוראים 9 בייטים כי זה הגודל של הודעת Payload מהשרת
             # (לפי החישוב ב-protocol.py: 4+1+1+2+1 = 9)
-            data = tcp_sock.recv(9)
-
-            if not data:
+            data = read_exact(tcp_sock, 9)
+            if data is None:
                 print("Server disconnected.")
                 break
 
+    
             # פריקת ההודעה
             valid, result, rank, suit = protocol.unpack_payload_server(data)
 
@@ -154,3 +154,4 @@ def main():
 if __name__ == "__main__":
 
     main()
+

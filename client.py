@@ -7,6 +7,14 @@ import sys
 # ============================================================================
 BUFFER_SIZE = 1024
 
+def read_exact(sock, n):
+    data = b''
+    while len(data) < n:
+        chunk = sock.recv(n - len(data))
+        if not chunk:
+            return None
+        data += chunk
+    return data
 
 def listen_for_offers():
     """
@@ -144,4 +152,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()

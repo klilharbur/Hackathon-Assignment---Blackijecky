@@ -1,154 +1,146 @@
 import struct
 
-# ============================================================================
-#                                  קבועים (Constants)
-# ============================================================================
 
-# הגדרות הרשת הבסיסיות לפי הוראות התרגיל
-SERVER_PORT_UDP = 13122  # הפורט שבו כולם מאזינים להצעות (Offers)
-MAGIC_COOKIE = 0xabcddcba  # "סיסמת הכניסה" שמופיעה בתחילת כל הודעה
-MSG_TYPE_OFFER = 0x2  # סוג הודעה: הצעת משחק (שרת -> לקוח)
-MSG_TYPE_REQUEST = 0x3  # סוג הודעה: בקשת משחק (לקוח -> שרת)
-MSG_TYPE_PAYLOAD = 0x4  # סוג הודעה: מהלך משחק (קלף או החלטה)
+SERVER_PORT_UDP = 13122  # הפורט הקבוע שבו השרת משדר ב-UDP (כמו תחנת רדיו קבועה)
+MAGIC_COOKIE = 0xabcddcba  # סיסמה לוודא שההודעה שייכת למשחק שלנו ולא סתם זבל ברשת
+MSG_TYPE_OFFER = 0x2  # קוד סוג הודעה: הצעה (Offer) מהשרת (בייט אחד)
+MSG_TYPE_REQUEST = 0x3  # קוד סוג הודעה: בקשת הצטרפות (Request) מהלקוח
+MSG_TYPE_PAYLOAD = 0x4  # קוד סוג הודעה: מהלך במשחק (קלף שנשלח או החלטת שחקן)
+
 
 def read_exact(sock, n):
-    data = b''
-    while len(data) < n:
-        chunk = sock.recv(n - len(data))
-        if not chunk:
-            return None
-        data += chunk
-    return data
+    """
+    מטרה: לקרוא מהרשת *בדיוק* n בייטים.
+    למה צריך את זה? ב-TCP הודעות יכולות להגיע בחלקים. פונקציית recv רגילה עלולה להחזיר רק חלק מההודעה.
+    הפונקציה הזו מבטיחה שלא נמשיך עד שאין לנו את כל החבילה ביד.
+    """
+    data = b''  # משתנה ריק (מסוג bytes) שיאגור את המידע שמגיע
+    while len(data) < n:  # לולאה: כל עוד כמות הבייטים שאספנו קטנה מ-n (מה שביקשנו)
+        try:
+            # מנסים לקרוא מהסוקט. מבקשים רק את הכמות שחסרה לנו (n פחות מה שכבר יש)
+            chunk = sock.recv(n - len(data))
 
-# ============================================================================
-#                          פונקציות עזר (Helper Functions)
-# ============================================================================
+            if not chunk:  # אם recv החזיר כלום (ריק), זה אומר שהצד השני ניתק את השיחה
+                return None
+
+            data += chunk  # מדביקים את החתיכה החדשה שהגיעה לערימה שלנו
+        except:
+            # אם הייתה שגיאת תקשורת כלשהי, מחזירים None כדי לסמן כישלון
+            return None
+
+    return data  # מחזירים את החבילה השלמה והמוכנה
+
+
+# --- פונקציות לטיפול במחרוזות (Strings) ---
 
 def pack_string(string_val, length):
     """
-    פונקציית עזר שהופכת מחרוזת טקסט רגילה לרצף בייטים באורך קבוע.
-    אם המחרוזת קצרה מדי - מוסיפה אפסים בסוף.
-    אם המחרוזת ארוכה מדי - חותכת אותה.
+    מטרה: להפוך טקסט (כמו שם קבוצה) לרצף בייטים באורך קבוע.
+    אם השם קצר מדי - מוסיפים אפסים בסוף.
+    אם השם ארוך מדי - חותכים אותו.
     """
-    # המרה מטקסט (str) לבייטים (bytes)
-    encoded = string_val.encode('utf-8')
-    # מילוי באפסים (padding) עד לאורך הרצוי וחיתוך במקרה הצורך
+    encoded = string_val.encode('utf-8')  # המרה מטקסט רגיל לבינארי (בייטים)
+    # ljust: מוסיף תווים ריקים (\x00) מצד ימין עד שמגיעים לאורך length
+    # [:length]: מבטיח שאם המחרוזת הייתה ארוכה מדי, נחתוך אותה בדיוק לאורך המותר
     return encoded.ljust(length, b'\x00')[:length]
 
 
 def unpack_string(byte_val):
     """
-    פונקציית עזר שהופכת רצף בייטים חזרה לטקסט נקי, ללא האפסים המיותרים.
+    מטרה: להפוך רצף בייטים חזרה לטקסט קריא ולנקות את ה"ריפוד" (האפסים).
     """
-    # הסרת אפסים מיותרים מסוף המחרוזת והמרה חזרה לטקסט
+    # rstrip: מסיר את תווי ה-Null (\x00) מסוף המחרוזת (הריפוד שהוספנו קודם)
+    # decode: הופך את הבייטים חזרה לטקסט (String)
     return byte_val.rstrip(b'\x00').decode('utf-8')
 
 
 # ============================================================================
-#                       1. הודעת הצעה (Offer Message)
-#                       כיוון: מהשרת ללקוח (UDP Broadcast)
+#                            פונקציות אריזה ופריקה (Packing/Unpacking)
 # ============================================================================
 
+# --- Offer (הודעת ההצעה ב-UDP) ---
 def pack_offer(server_port, server_name):
-    """
-    אריזת הודעת Offer.
-    המבנה: [Cookie (4)] [Type (1)] [Port (2)] [Name (32)]
-    """
-    # הכנת השם באורך בדיוק 32 בייטים
+    # קודם כל מכינים את השם שיהיה בדיוק 32 בייטים (עם ריפוד אפסים אם צריך)
     name_bytes = pack_string(server_name, 32)
 
-    # האריזה עצמה בעזרת struct
-    # ! = Network Endian (סדר בייטים אוניברסלי לרשת)
-    # I = Unsigned Int (4 bytes) - בשביל ה-Cookie
-    # B = Unsigned Char (1 byte) - בשביל ה-Type
-    # H = Unsigned Short (2 bytes) - בשביל ה-Port
-    # 32s = String (32 bytes) - בשביל השם
+    # הפקודה struct.pack הופכת משתנים לרצף בייטים אחד ארוך.
+    # הפורמט '!IBH32s' אומר:
+    # ! = Network Order (Big Endian) - חובה בתקשורת כדי שכל המחשבים יבינו את המספרים אותו דבר
+    # I = Unsigned Int (4 בייטים) - עבור ה-Cookie
+    # B = Unsigned Char (1 בייט) - עבור ה-Message Type
+    # H = Unsigned Short (2 בייטים) - עבור הפורט (מספר עד 65,535 נכנס ב-2 בייטים)
+    # 32s = מחרוזת של 32 בייטים - עבור שם השרת
+    # סה"כ גודל: 4 + 1 + 2 + 32 = 39 בייטים
     return struct.pack('!IBH32s', MAGIC_COOKIE, MSG_TYPE_OFFER, server_port, name_bytes)
 
 
 def unpack_offer(data):
-    """
-    פריקת הודעת Offer. משמש את הלקוח.
-    מחזיר: (is_valid, server_port, server_name)
-    """
-    # בדיקת אורך: 4+1+2+32 = 39 בייטים
+    # בדיקת גודל: האם קיבלנו בדיוק 39 בייטים? אם לא, זו לא הודעת Offer תקינה
     if len(data) != 39:
         return False, None, None
-
     try:
-        # פריקת הנתונים לפי אותו פורמט בדיוק
+        # הפקודה struct.unpack עושה את ההפך: לוקחת בייטים ומפרקת למשתנים
         cookie, msg_type, server_port, name_bytes = struct.unpack('!IBH32s', data)
 
-        # בדיקה שההודעה תקינה (Cookie נכון ו-Type נכון)
+        # בדיקות אבטחה: האם הסיסמה (Cookie) נכונה? האם סוג ההודעה הוא 0x2?
         if cookie != MAGIC_COOKIE or msg_type != MSG_TYPE_OFFER:
             return False, None, None
 
+        # המרה של בייטים השם חזרה לטקסט נקי
         server_name = unpack_string(name_bytes)
-        return True, server_port, server_name
 
-    except Exception:
+        # החזרת הנתונים המעובדים בהצלחה
+        return True, server_port, server_name
+    except:
         return False, None, None
 
 
-# ============================================================================
-#                       2. הודעת בקשה (Request Message)
-#                       כיוון: מהלקוח לשרת (TCP)
-# ============================================================================
-
+# --- Request (הודעת הבקשה ב-TCP) ---
 def pack_request(num_rounds, team_name):
-    """
-    אריזת הודעת Request.
-    המבנה: [Cookie (4)] [Type (1)] [Rounds (1)] [Name (32)]
-    """
-    name_bytes = pack_string(team_name, 32)
-    # הפורמט: I (קוקי), B (סוג), B (מספר סיבובים - בייט אחד), 32s (שם)
+    name_bytes = pack_string(team_name, 32)  # הכנת השם (32 בייטים)
+
+    # הפורמט '!IBB32s':
+    # I (4) - Cookie
+    # B (1) - Type
+    # B (1) - מספר הסיבובים (מספיק בייט אחד למספר קטן)
+    # 32s - שם הקבוצה
+    # סה"כ גודל: 4 + 1 + 1 + 32 = 38 בייטים
     return struct.pack('!IBB32s', MAGIC_COOKIE, MSG_TYPE_REQUEST, num_rounds, name_bytes)
 
 
 def unpack_request(data):
-    """
-    פריקת הודעת Request. משמש את השרת.
-    מחזיר: (is_valid, num_rounds, team_name)
-    """
-    # בדיקת אורך: 4+1+1+32 = 38 בייטים
+    # אנחנו מצפים בדיוק ל-38 בייטים
     if len(data) != 38:
         return False, None, None
-
     try:
         cookie, msg_type, rounds, name_bytes = struct.unpack('!IBB32s', data)
 
+        # וידוא שזו הודעת Request (סוג 0x3) והקוקי נכון
         if cookie != MAGIC_COOKIE or msg_type != MSG_TYPE_REQUEST:
             return False, None, None
 
         team_name = unpack_string(name_bytes)
         return True, rounds, team_name
-
-    except Exception:
+    except:
         return False, None, None
 
 
-# ============================================================================
-#                       3. הודעות משחק (Payload Messages)
-#                       יש שני סוגים שונים לאותו סוג הודעה (Type 4)
-# ============================================================================
-
-# --- א. הלקוח שולח החלטה (Hit/Stand) ---
-
+# --- Payload Client (החלטה: Hittt או Stand) ---
 def pack_payload_client(decision):
-    """
-    הלקוח שולח: "Hittt" או "Stand".
-    המבנה: [Cookie (4)] [Type (1)] [Decision (5)]
-    """
-    # מוודאים שזה בדיוק 5 תווים (Hittt עם 3 t או Stand)
+    # כאן השדה הוא באורך 5 בייטים. המילה "Hittt" או "Stand" נכנסת בדיוק.
     decision_bytes = pack_string(decision, 5)
+
+    # פורמט '!IB5s':
+    # I (4) - Cookie
+    # B (1) - Type
+    # 5s (5) - המחרוזת של ההחלטה
+    # סה"כ: 4 + 1 + 5 = 10 בייטים
     return struct.pack('!IB5s', MAGIC_COOKIE, MSG_TYPE_PAYLOAD, decision_bytes)
 
 
 def unpack_payload_client(data):
-    """
-    השרת קורא את ההחלטה של הלקוח.
-    """
-    if len(data) != 10:  # 4 + 1 + 5 = 10
+    # מצפים ל-10 בייטים
+    if len(data) != 10:
         return False, None
     try:
         cookie, msg_type, decision_bytes = struct.unpack('!IB5s', data)
@@ -159,25 +151,21 @@ def unpack_payload_client(data):
         return False, None
 
 
-# --- ב. השרת שולח תוצאה וקלף ---
-
+# --- Payload Server (קלף או תוצאה) ---
 def pack_payload_server(result_code, card_rank, card_suit):
-    """
-    השרת שולח עדכון.
-    המבנה: [Cookie (4)] [Type (1)] [Result (1)] [Rank (2)] [Suit (1)]
-    Result: 0=ממשיכים, 1=תיקו, 2=הפסד, 3=ניצחון
-    Rank: מספר הקלף (2-10 או ערכי תמונה)
-    Suit: צורת הקלף (0-3)
-    """
-    # הפורמט: I (קוקי), B (סוג), B (תוצאה), H (דרגה - 2 בייטים), B (צורה)
+    # פורמט '!IBBHB':
+    # I (4) - Cookie
+    # B (1) - Type (0x4)
+    # B (1) - Result Code (0=Active, 1=Tie, 2=Loss, 3=Win)
+    # H (2) - Card Rank (מספר הקלף, 1-13)
+    # B (1) - Card Suit (צורה, 0-3)
+    # סה"כ: 4 + 1 + 1 + 2 + 1 = 9 בייטים
     return struct.pack('!IBBHB', MAGIC_COOKIE, MSG_TYPE_PAYLOAD, result_code, card_rank, card_suit)
 
 
 def unpack_payload_server(data):
-    """
-    הלקוח מקבל עדכון מהשרת.
-    """
-    if len(data) != 9:  # 4 + 1 + 1 + 2 + 1 = 9
+    # מצפים ל-9 בייטים
+    if len(data) != 9:
         return False, None, None, None
     try:
         cookie, msg_type, result, rank, suit = struct.unpack('!IBBHB', data)
@@ -185,5 +173,4 @@ def unpack_payload_server(data):
             return False, None, None, None
         return True, result, rank, suit
     except:
-
         return False, None, None, None

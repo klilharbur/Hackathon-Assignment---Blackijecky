@@ -66,8 +66,6 @@ def get_local_ip():
     except:
         return "127.0.0.1" # אם אין אינטרנט, חזור לכתובת המקומית
 
-# --- תהליך השידור ב-UDP ---
-# פונקציה שרצה בנפרד ו"צועקת" לכולם שהשרת קיים
 def broadcast_offers(tcp_port):
     my_ip = get_local_ip()
     print(f"Server started, listening on IP address {my_ip}")
@@ -78,7 +76,7 @@ def broadcast_offers(tcp_port):
     udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
     try:
-        # הצמדת הסוקט ל-IP שלי (חשוב כדי לוודא שאנחנו ברשת הנכונה)
+        # הצמדת הסוקט ל-IP שלי
         udp_sock.bind((my_ip, 0))
         print(f"UDP socket bound successfully to {my_ip}")
     except Exception as e:
